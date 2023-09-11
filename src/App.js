@@ -1,29 +1,8 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import StarRating from "./StarRating";
-
-const tempMovieData = [
-  {
-    imdbID: "tt1375666",
-    Title: "Inception",
-    Year: "2010",
-    Poster:
-      "https://m.media-amazon.com/images/M/MV5BMjAxMzY3NjcxNF5BMl5BanBnXkFtZTcwNTI5OTM0Mw@@._V1_SX300.jpg",
-  },
-  {
-    imdbID: "tt0133093",
-    Title: "The Matrix",
-    Year: "1999",
-    Poster:
-      "https://m.media-amazon.com/images/M/MV5BNzQzOTk3OTAtNDQ0Zi00ZTVkLWI0MTEtMDllZjNkYzNjNTc4L2ltYWdlXkEyXkFqcGdeQXVyNjU0OTQ0OTY@._V1_SX300.jpg",
-  },
-  {
-    imdbID: "tt6751668",
-    Title: "Parasite",
-    Year: "2019",
-    Poster:
-      "https://m.media-amazon.com/images/M/MV5BYWZjMjk3ZTItODQ2ZC00NTY5LWE0ZDYtZTI3MjcwN2Q5NTVkXkEyXkFqcGdeQXVyODk4OTc3MTY@._V1_SX300.jpg",
-  },
-];
+import { useMovies } from "./useMovies";
+import { useLocalStorageState } from "./useLocalStorageState";
+import { useKey } from "./useKey";
 
 const tempWatchedData = [
   {
@@ -71,6 +50,16 @@ function Logo() {
 }
 
 function Search({ query, setQuery }) {
+  const inputEl = useRef(null);
+
+  useKey("Enter", function () {
+    if (document.activeElement === inputEl.current) return;
+
+    inputEl.current.focus();
+    //on enter press empty the search bar
+    setQuery("");
+  });
+
   return (
     <>
       <input
@@ -79,6 +68,7 @@ function Search({ query, setQuery }) {
         placeholder="Search movies..."
         value={query}
         onChange={(e) => setQuery(e.target.value)}
+        ref={inputEl}
       />
     </>
   );
@@ -98,11 +88,11 @@ const KEY = "876fa193";
 
 export default function App() {
   const [query, setQuery] = useState("");
-  const [movies, setMovies] = useState([]);
-  const [watched, setWatched] = useState([]);
-  const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState("");
   const [selectedId, setSelectedId] = useState("");
+
+  const [watched, setWatched] = useLocalStorageState([], "watched");
+
+  const { movies, isLoading, error } = useMovies(query);
 
   function handleSelectMovie(id) {
     setSelectedId((movieId) => (id === movieId ? null : id));
@@ -118,66 +108,13 @@ export default function App() {
     // if (watched.find((watchedMovie) => movie.imdbId === watchedMovie.imdbId))
     //   return;
     setWatched((watched) => [...watched, movie]);
+
+    // localStorage.setItem("watched", JSON.stringify([...watched, movie]));
   }
 
   function handleDeleteWatched(id) {
     setWatched((watched) => watched.filter((movie) => movie.imdbId !== id));
   }
-
-  useEffect(
-    function () {
-      const controller = new AbortController();
-      //this is a browser API
-
-      async function fetchMovies() {
-        try {
-          setIsLoading(true);
-          setError("");
-          //always reset the error to empty string on startup or the error state will be kept
-          const res = await fetch(
-            `http://www.omdbapi.com/?apikey=${KEY}&s=${query}`,
-            { signal: controller.signal }
-          );
-
-          if (!res.ok)
-            throw new Error("Something went wrong with fetching movies");
-
-          const data = await res.json();
-
-          if (data.Response === "False") throw new Error("Movie not found");
-
-          setMovies(data.Search);
-          setError("");
-          //the search property is capital coming from the API
-        } catch (err) {
-          console.error(err);
-          if (err.name !== "AbortError") {
-            setError(err.message);
-          }
-        } finally {
-          setIsLoading(false);
-        }
-      }
-
-      if (query.length < 3) {
-        //rather than putting !query.length its better to put if the length is less than 3 then no point in searching at all.
-        setMovies([]);
-        setError("");
-        return;
-      }
-
-      handleCloseMovie();
-      //this is added here to close the movieDetails box when the user searches for a new movie
-
-      fetchMovies();
-      //we are just calling the function dont use return keyword this function isnt returning anything only thing a useEffect can return is a cleanup function
-
-      return function () {
-        controller.abort();
-      };
-    },
-    [query]
-  );
 
   //in react you turn a react function to an async function.
   // if you add the async keyword to the function you get an error
@@ -348,6 +285,16 @@ function MovieDetails({ selectedId, onCloseMovie, onAddWatched, watched }) {
   const [isLoading, setIsLoading] = useState(false);
   const [userRating, setUserRating] = useState("");
 
+  const countRef = useRef(0);
+
+  useEffect(
+    function () {
+      if (userRating) countRef.current++;
+      //we need the if otherwise this works on mount even if the user has not rated this will be 1
+    },
+    [userRating]
+  );
+
   const isWatched = watched.map((movie) => movie.imdbId).includes(selectedId);
   const watchedUserRating = watched.find(
     (movie) => movie.imdbId === selectedId
@@ -377,6 +324,7 @@ function MovieDetails({ selectedId, onCloseMovie, onAddWatched, watched }) {
       imdbRating: Number(imdbRating),
       runtime: runtime.split(" ").at(0),
       userRating,
+      countRatingDecisions: countRef.current,
     };
     onAddWatched(newWatchedMovie);
     onCloseMovie();
@@ -413,22 +361,8 @@ function MovieDetails({ selectedId, onCloseMovie, onAddWatched, watched }) {
     [title]
   );
 
-  useEffect(
-    function () {
-      function callback(e) {
-        if (e.code === "Escape") {
-          onCloseMovie();
-        }
-      }
-
-      document.addEventListener("keydown", callback);
-
-      return function () {
-        document.removeEventListener("keydown", callback);
-      };
-    },
-    [onCloseMovie]
-  );
+  //escape useffect was here
+  useKey("Escape", onCloseMovie);
 
   return (
     <div className="details">
